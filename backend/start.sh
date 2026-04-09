@@ -1,5 +1,6 @@
 #!/bin/bash
 set -e
+set -o pipefail
 
 # ── Virtual display for OpenSCAD headless rendering ──────────────
 if [ -z "$DISPLAY" ]; then
@@ -17,8 +18,8 @@ else
     echo "[start] Supabase Storage enabled — skipping local static dir setup"
 fi
 
-# ── Database init (idempotent) ───────────────────────────────────
-python3 init_db.py
+# ── Database init (idempotent — failure is non-fatal) ───────────
+python3 init_db.py || echo "[start] WARNING: init_db.py failed — continuing without seed data"
 
 # ── Launch FastAPI ───────────────────────────────────────────────
 exec uvicorn main:app \

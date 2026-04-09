@@ -11,7 +11,11 @@ from database import engine
 from models import Base
 from routers import auth, generate, admin, history
 
-Base.metadata.create_all(bind=engine)
+try:
+    Base.metadata.create_all(bind=engine)
+except Exception as _e:
+    import logging
+    logging.warning(f"[startup] DB create_all failed (will retry on first request): {_e}")
 
 app = FastAPI(title="NL-CAD API", version="1.0.0")
 
