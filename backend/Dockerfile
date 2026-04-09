@@ -5,13 +5,9 @@ ENV LANG=C.UTF-8
 ENV PYTHONUNBUFFERED=1
 
 # ── System packages ─────────────────────────────────────────────
-# openscad: CAD → STL rendering
-# xvfb: virtual display for headless OpenSCAD (Ubuntu 22.04 package)
-# python3-pip: package installer
+# OpenSCAD from Ubuntu 22.04 default repos (no PPA needed — avoids GPG issues in Docker)
+# xvfb: virtual framebuffer for headless rendering
 RUN apt-get update && apt-get install -y --no-install-recommends \
-        software-properties-common \
-    && add-apt-repository ppa:openscad/releases \
-    && apt-get update && apt-get install -y --no-install-recommends \
         openscad \
         xvfb \
         python3 \
