@@ -1,0 +1,35 @@
+# Render deployment configuration
+# https://render.com/docs/render-yaml-spec
+#
+# Supabase를 사용하므로 Persistent Disk 불필요 → Free 플랜으로도 배포 가능
+# (단, Free 플랜은 15분 비활성 후 슬립 → 첫 요청 시 ~30초 콜드 스타트)
+
+services:
+  - type: web
+    name: nl-cad-backend
+    env: docker
+    dockerfilePath: ./backend/Dockerfile
+    dockerContext: ./backend
+    plan: free          # Supabase로 DB/Storage 외부화 → free 플랜 사용 가능
+    healthCheckPath: /api/health
+    envVars:
+      - key: SECRET_KEY
+        generateValue: true
+      - key: ANTHROPIC_API_KEY
+        sync: false
+      # Supabase 연결 정보 (Render 대시보드에서 직접 입력)
+      - key: SUPABASE_URL
+        sync: false
+      - key: SUPABASE_SERVICE_KEY
+        sync: false
+      - key: DATABASE_URL
+        sync: false
+      # Vercel 프론트엔드 URL (배포 후 업데이트)
+      - key: CORS_ORIGINS
+        sync: false
+      - key: CORS_ORIGIN_REGEX
+        value: "https://.*\\.vercel\\.app"
+      - key: ADMIN_EMAIL
+        value: admin@example.com
+      - key: ADMIN_PASSWORD
+        sync: false
