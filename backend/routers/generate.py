@@ -1,22 +1,20 @@
 from fastapi import APIRouter, Depends, HTTPException
-from sqlalchemy.orm import Session
-import json
-import uuid
-import os
-import tempfile
-from database import get_db
-from models import User, Generation, SystemPrompt
 from schemas import GenerateRequest, GenerationOut
 from auth import get_approved_user
 from services.ai_service import parse_input
 from services.scad_generator import generate_scad_code
 from services.cad_service import generate_stl
 from services.storage_service import upload_stl
+import db_ops
+import json
+import uuid
+import os
+import tempfile
 
 router = APIRouter()
 
 
-def _to_out(gen: Generation) -> dict:
+def _to_out(gen) -> dict:
     return {
         "id": gen.id,
         "input_text": gen.input_text,
@@ -30,21 +28,14 @@ def _to_out(gen: Generation) -> dict:
 
 
 @router.post("/generate", response_model=GenerationOut)
-async def generate(
-    request: GenerateRequest,
-    current_user: User = Depends(get_approved_user),
-    db: Session = Depends(get_db),
-):
+async def generate(request: GenerateRequest, current_user=Depends(get_approved_user)):
     if not request.input_text.strip():
         raise HTTPException(status_code=422, detail="입력값이 비어 있습니다.")
 
-    sys_prompt_row = db.query(SystemPrompt).filter(SystemPrompt.name == "main").first()
+    sys_prompt_row = db_ops.get_system_prompt()
     system_prompt_text = sys_prompt_row.content if sys_prompt_row else None
 
-    gen = Generation(user_id=current_user.id, input_text=request.input_text, status="pending")
-    db.add(gen)
-    db.commit()
-    db.refresh(gen)
+    gen = db_ops.create_generation(user_id=current_user.id, input_text=request.input_text)
 
     try:
         params = await parse_input(
@@ -52,40 +43,36 @@ async def generate(
             system_prompt=system_prompt_text,
             user_prompt=current_user.custom_prompt,
         )
-        gen.params_json = json.dumps(params, ensure_ascii=False)
-
+        params_json = json.dumps(params, ensure_ascii=False)
         scad_code = generate_scad_code(params)
-        gen.scad_code = scad_code
 
         uid = uuid.uuid4().hex
         stl_filename = f"{uid}.stl"
 
-        # Use a temp dir for OpenSCAD work; upload_stl handles final destination
         with tempfile.TemporaryDirectory() as tmpdir:
             scad_path = os.path.join(tmpdir, f"{uid}.scad")
             tmp_stl = os.path.join(tmpdir, stl_filename)
             generate_stl(scad_code, scad_path, tmp_stl)
             stl_url = upload_stl(stl_filename, tmp_stl)
 
-        gen.stl_url = stl_url
-        gen.status = "success"
+        db_ops.update_generation(
+            gen.id,
+            params_json=params_json,
+            scad_code=scad_code,
+            stl_url=stl_url,
+            status="success",
+        )
 
     except ValueError as e:
-        gen.status = "failed"
-        gen.error_message = str(e)
-        db.commit()
+        db_ops.update_generation(gen.id, status="failed", error_message=str(e))
         raise HTTPException(status_code=422, detail=str(e))
     except RuntimeError as e:
-        gen.status = "failed"
-        gen.error_message = str(e)
-        db.commit()
+        db_ops.update_generation(gen.id, status="failed", error_message=str(e))
         raise HTTPException(status_code=500, detail=str(e))
     except Exception as e:
-        gen.status = "failed"
-        gen.error_message = f"서버 오류가 발생했습니다: {e}"
-        db.commit()
-        raise HTTPException(status_code=500, detail=gen.error_message)
+        msg = f"서버 오류가 발생했습니다: {e}"
+        db_ops.update_generation(gen.id, status="failed", error_message=msg)
+        raise HTTPException(status_code=500, detail=msg)
 
-    db.commit()
-    db.refresh(gen)
-    return _to_out(gen)
+    updated = db_ops.get_generation_by_id(gen.id, current_user.id)
+    return _to_out(updated)

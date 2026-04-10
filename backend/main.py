@@ -7,22 +7,21 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 
-from database import engine
-from models import Base
 from routers import auth, generate, admin, history
 
+# Startup: try to initialize DB (non-fatal)
 try:
-    Base.metadata.create_all(bind=engine)
+    import init_db
+    init_db.main()
 except Exception as _e:
     import logging
-    logging.warning(f"[startup] DB create_all failed (will retry on first request): {_e}")
+    logging.warning(f"[startup] init_db failed: {_e}")
 
 app = FastAPI(title="NL-CAD API", version="1.0.0")
 
-# CORS: explicit origins + optional regex for Vercel preview URLs
+# CORS
 _raw_origins = os.getenv("CORS_ORIGINS", "http://localhost:5173,http://localhost:3000")
 origins = [o.strip() for o in _raw_origins.split(",") if o.strip()]
-# CORS_ORIGIN_REGEX: allows all *.vercel.app by default; set to "" to disable
 _origin_regex = os.getenv("CORS_ORIGIN_REGEX", r"https://.*\.vercel\.app")
 
 app.add_middleware(
@@ -34,8 +33,7 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# Local static file serving — only active when Supabase Storage is NOT configured.
-# In production with Supabase, STL files live in Supabase Storage (no local mount needed).
+# Local static file serving — only when Supabase Storage is NOT configured
 _use_local_static = not os.getenv("SUPABASE_URL", "").strip()
 STATIC_DIR = os.getenv("STATIC_DIR", "static")
 if _use_local_static:
@@ -56,34 +54,14 @@ def health():
 
 @app.get("/api/debug/db")
 def debug_db():
-    """Temporary debug endpoint — remove after DB issue resolved."""
-    import traceback, urllib.request
-    results = {}
-
-    # 1. Test SQLAlchemy direct connection
-    from sqlalchemy import text
+    """Temporary debug endpoint."""
+    import db_ops
+    result = {"mode": "rest_api" if db_ops.USE_REST else "sqlalchemy"}
     try:
-        with engine.connect() as conn:
-            conn.execute(text("SELECT 1"))
-        results["sqlalchemy"] = "connected"
+        u = db_ops.get_user_by_email("admin@example.com")
+        result["admin_found"] = bool(u)
+        if u:
+            result["admin_email"] = u.email
     except Exception as e:
-        results["sqlalchemy"] = f"error: {str(e)[:200]}"
-
-    # 2. Test Supabase REST API from Render
-    supabase_url = os.getenv("SUPABASE_URL", "")
-    supabase_key = os.getenv("SUPABASE_SERVICE_KEY", "")
-    if supabase_url and supabase_key:
-        try:
-            req = urllib.request.Request(
-                f"{supabase_url}/rest/v1/users?limit=1",
-                headers={"apikey": supabase_key, "Authorization": f"Bearer {supabase_key}"}
-            )
-            with urllib.request.urlopen(req, timeout=10) as resp:
-                body = resp.read().decode()
-            results["rest_api"] = f"connected, got {len(body)} bytes"
-        except Exception as e:
-            results["rest_api"] = f"error: {str(e)[:200]}"
-    else:
-        results["rest_api"] = "not configured"
-
-    return results
+        result["error"] = str(e)[:300]
+    return result

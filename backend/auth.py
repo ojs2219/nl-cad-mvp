@@ -4,10 +4,7 @@ from jose import JWTError, jwt
 from passlib.context import CryptContext
 from fastapi import Depends, HTTPException, status
 from fastapi.security import OAuth2PasswordBearer
-from sqlalchemy.orm import Session
 import os
-from database import get_db
-from models import User
 
 SECRET_KEY = os.getenv("SECRET_KEY", "dev-secret-key-change-in-production")
 ALGORITHM = "HS256"
@@ -32,7 +29,7 @@ def create_access_token(data: dict, expires_delta: Optional[timedelta] = None) -
     return jwt.encode(to_encode, SECRET_KEY, algorithm=ALGORITHM)
 
 
-def get_current_user(token: str = Depends(oauth2_scheme), db: Session = Depends(get_db)) -> User:
+def get_current_user(token: str = Depends(oauth2_scheme)):
     exc = HTTPException(
         status_code=status.HTTP_401_UNAUTHORIZED,
         detail="유효하지 않은 인증 정보입니다.",
@@ -46,13 +43,14 @@ def get_current_user(token: str = Depends(oauth2_scheme), db: Session = Depends(
     except JWTError:
         raise exc
 
-    user = db.query(User).filter(User.id == int(user_id)).first()
+    import db_ops
+    user = db_ops.get_user_by_id(int(user_id))
     if user is None:
         raise exc
     return user
 
 
-def get_approved_user(current_user: User = Depends(get_current_user)) -> User:
+def get_approved_user(current_user=Depends(get_current_user)):
     if not current_user.is_approved and not current_user.is_admin:
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
@@ -61,7 +59,7 @@ def get_approved_user(current_user: User = Depends(get_current_user)) -> User:
     return current_user
 
 
-def get_admin_user(current_user: User = Depends(get_current_user)) -> User:
+def get_admin_user(current_user=Depends(get_current_user)):
     if not current_user.is_admin:
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,

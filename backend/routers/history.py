@@ -1,15 +1,13 @@
 from fastapi import APIRouter, Depends, HTTPException
-from sqlalchemy.orm import Session
 from typing import List
-from database import get_db
-from models import User, Generation
 from schemas import GenerationOut
 from auth import get_approved_user
+import db_ops
 
 router = APIRouter()
 
 
-def _to_out(gen: Generation) -> dict:
+def _to_out(gen) -> dict:
     return {
         "id": gen.id,
         "input_text": gen.input_text,
@@ -23,41 +21,21 @@ def _to_out(gen: Generation) -> dict:
 
 
 @router.get("/", response_model=List[GenerationOut])
-def get_history(current_user: User = Depends(get_approved_user), db: Session = Depends(get_db)):
-    records = (
-        db.query(Generation)
-        .filter(Generation.user_id == current_user.id)
-        .order_by(Generation.created_at.desc())
-        .all()
-    )
+def get_history(current_user=Depends(get_approved_user)):
+    records = db_ops.get_user_generations(current_user.id)
     return [_to_out(r) for r in records]
 
 
 @router.get("/{generation_id}", response_model=GenerationOut)
-def get_generation(
-    generation_id: int,
-    current_user: User = Depends(get_approved_user),
-    db: Session = Depends(get_db),
-):
-    gen = db.query(Generation).filter(
-        Generation.id == generation_id, Generation.user_id == current_user.id
-    ).first()
+def get_generation(generation_id: int, current_user=Depends(get_approved_user)):
+    gen = db_ops.get_generation_by_id(generation_id, current_user.id)
     if not gen:
         raise HTTPException(status_code=404, detail="기록을 찾을 수 없습니다.")
     return _to_out(gen)
 
 
 @router.delete("/{generation_id}")
-def delete_generation(
-    generation_id: int,
-    current_user: User = Depends(get_approved_user),
-    db: Session = Depends(get_db),
-):
-    gen = db.query(Generation).filter(
-        Generation.id == generation_id, Generation.user_id == current_user.id
-    ).first()
-    if not gen:
+def delete_generation(generation_id: int, current_user=Depends(get_approved_user)):
+    if not db_ops.delete_generation(generation_id, current_user.id):
         raise HTTPException(status_code=404, detail="기록을 찾을 수 없습니다.")
-    db.delete(gen)
-    db.commit()
     return {"message": "삭제되었습니다."}

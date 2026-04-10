@@ -1,12 +1,8 @@
-"""Run once to initialize the database with admin user and default system prompt."""
+"""Initialize the database with admin user and default system prompt."""
 import os
 from dotenv import load_dotenv
 
 load_dotenv()
-
-from database import engine, SessionLocal
-from models import Base, User, SystemPrompt
-from auth import hash_password
 
 DEFAULT_PROMPT = """당신은 CAD 형상 파라미터 추출 전문가입니다. 사용자의 자연어 또는 수치 입력을 파싱하여 순수한 JSON 객체만 반환하세요. 설명이나 다른 텍스트는 절대 포함하지 마세요.
 
@@ -28,7 +24,51 @@ DEFAULT_PROMPT = """당신은 CAD 형상 파라미터 추출 전문가입니다.
 입력: "60x60x20 박스 위에 반지름 10 높이 30 원기둥" → {"shapes": [{"type": "box", "width": 60, "depth": 60, "height": 20}, {"type": "cylinder", "radius": 10, "height": 30, "on_top": true}]}"""
 
 
-def main():
+def _init_rest():
+    """Initialize DB data using Supabase REST API."""
+    from supabase import create_client
+    supabase_url = os.getenv("SUPABASE_URL")
+    supabase_key = os.getenv("SUPABASE_SERVICE_KEY")
+    supa = create_client(supabase_url, supabase_key)
+
+    admin_email = os.getenv("ADMIN_EMAIL", "admin@example.com")
+    admin_pw = os.getenv("ADMIN_PASSWORD", "admin1234")
+
+    from auth import hash_password
+
+    # Admin user
+    existing = supa.table("users").select("id").eq("email", admin_email).execute()
+    if not existing.data:
+        supa.table("users").insert({
+            "email": admin_email,
+            "hashed_password": hash_password(admin_pw),
+            "is_approved": True,
+            "is_admin": True,
+        }).execute()
+        print(f"[+] Admin created: {admin_email}")
+    else:
+        print(f"[=] Admin already exists: {admin_email}")
+
+    # System prompt
+    existing_prompt = supa.table("system_prompts").select("id").eq("name", "main").execute()
+    if not existing_prompt.data:
+        supa.table("system_prompts").insert({
+            "name": "main",
+            "content": DEFAULT_PROMPT,
+        }).execute()
+        print("[+] Default system prompt created.")
+    else:
+        print("[=] System prompt already exists.")
+
+    print("[✓] REST API initialization complete.")
+
+
+def _init_sqlalchemy():
+    """Initialize DB using SQLAlchemy (local dev)."""
+    from database import engine, SessionLocal
+    from models import Base, User, SystemPrompt
+    from auth import hash_password
+
     Base.metadata.create_all(bind=engine)
     db = SessionLocal()
     try:
@@ -42,7 +82,7 @@ def main():
                 is_approved=True,
                 is_admin=True,
             ))
-            print(f"[+] Admin created: {admin_email} / {admin_pw}")
+            print(f"[+] Admin created: {admin_email}")
         else:
             print(f"[=] Admin already exists: {admin_email}")
 
@@ -53,9 +93,18 @@ def main():
             print("[=] System prompt already exists.")
 
         db.commit()
-        print("[✓] Database initialization complete.")
+        print("[✓] SQLAlchemy initialization complete.")
     finally:
         db.close()
+
+
+def main():
+    supabase_url = os.getenv("SUPABASE_URL", "")
+    supabase_key = os.getenv("SUPABASE_SERVICE_KEY", "")
+    if supabase_url and supabase_key:
+        _init_rest()
+    else:
+        _init_sqlalchemy()
 
 
 if __name__ == "__main__":
