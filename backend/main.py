@@ -57,12 +57,33 @@ def health():
 @app.get("/api/debug/db")
 def debug_db():
     """Temporary debug endpoint — remove after DB issue resolved."""
-    import traceback
+    import traceback, urllib.request
+    results = {}
+
+    # 1. Test SQLAlchemy direct connection
     from sqlalchemy import text
     try:
-        db_url_masked = str(engine.url).replace(str(engine.url.password or ""), "***")
         with engine.connect() as conn:
-            result = conn.execute(text("SELECT 1 AS ok")).fetchone()
-        return {"db": "connected", "url": db_url_masked, "ping": result[0]}
+            conn.execute(text("SELECT 1"))
+        results["sqlalchemy"] = "connected"
     except Exception as e:
-        return {"db": "error", "error": str(e), "trace": traceback.format_exc()[-2000:]}
+        results["sqlalchemy"] = f"error: {str(e)[:200]}"
+
+    # 2. Test Supabase REST API from Render
+    supabase_url = os.getenv("SUPABASE_URL", "")
+    supabase_key = os.getenv("SUPABASE_SERVICE_KEY", "")
+    if supabase_url and supabase_key:
+        try:
+            req = urllib.request.Request(
+                f"{supabase_url}/rest/v1/users?limit=1",
+                headers={"apikey": supabase_key, "Authorization": f"Bearer {supabase_key}"}
+            )
+            with urllib.request.urlopen(req, timeout=10) as resp:
+                body = resp.read().decode()
+            results["rest_api"] = f"connected, got {len(body)} bytes"
+        except Exception as e:
+            results["rest_api"] = f"error: {str(e)[:200]}"
+    else:
+        results["rest_api"] = "not configured"
+
+    return results
