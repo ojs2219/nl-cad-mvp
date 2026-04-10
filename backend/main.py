@@ -52,3 +52,17 @@ app.include_router(admin.router, prefix="/api/admin", tags=["admin"])
 @app.get("/api/health")
 def health():
     return {"status": "ok"}
+
+
+@app.get("/api/debug/db")
+def debug_db():
+    """Temporary debug endpoint — remove after DB issue resolved."""
+    import traceback
+    from sqlalchemy import text
+    try:
+        db_url_masked = str(engine.url).replace(str(engine.url.password or ""), "***")
+        with engine.connect() as conn:
+            result = conn.execute(text("SELECT 1 AS ok")).fetchone()
+        return {"db": "connected", "url": db_url_masked, "ping": result[0]}
+    except Exception as e:
+        return {"db": "error", "error": str(e), "trace": traceback.format_exc()[-2000:]}
