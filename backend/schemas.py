@@ -37,15 +37,22 @@ class GenerateRequest(BaseModel):
     input_text: str
 
 
+class ModifyRequest(BaseModel):
+    modification_text: str
+    """Natural-language description of what to change (e.g. '두께를 30mm로 변경')."""
+
+
 class GenerationOut(BaseModel):
     id: int
     input_text: str
-    params_json: Optional[str] = None
+    params_json: Optional[str] = None    # legacy flat format (kept for compat)
+    ir_json: Optional[str] = None        # new IR tree JSON
     scad_code: Optional[str] = None
     stl_url: Optional[str] = None
     status: str
     error_message: Optional[str] = None
     created_at: datetime
+    parent_id: Optional[int] = None      # set when this is a modified version
 
     model_config = {"from_attributes": True}
 

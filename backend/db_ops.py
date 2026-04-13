@@ -148,16 +148,15 @@ def set_system_prompt(content: str):
 
 # ── generations ───────────────────────────────────────────────────────────────
 
-def create_generation(user_id: int, input_text: str):
+def create_generation(user_id: int, input_text: str, parent_id: Optional[int] = None):
+    row: dict = {"user_id": user_id, "input_text": input_text, "status": "pending"}
+    if parent_id is not None:
+        row["parent_id"] = parent_id
     if USE_REST:
-        r = _supa.table("generations").insert({
-            "user_id": user_id,
-            "input_text": input_text,
-            "status": "pending",
-        }).execute()
+        r = _supa.table("generations").insert(row).execute()
         return _ns(r.data[0])
     with _sa() as db:
-        gen = _Generation(user_id=user_id, input_text=input_text, status="pending")
+        gen = _Generation(**row)
         db.add(gen)
         db.commit()
         db.refresh(gen)
