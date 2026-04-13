@@ -1,14 +1,16 @@
 """
 IR modifier — apply a natural-language edit request to an existing IRTree.
 
-Strategy: send the current IR JSON + the modification request to Claude,
-ask for a complete updated IR JSON, then validate and return it.
+Strategy:
+1. Try regex fast-path for simple param changes (height, radius, width, etc.)
+2. Fall back to Claude API for complex modifications.
 
 The modifier also exposes a small set of programmatic patch helpers
 (set_param, add_child, remove_child) for when the caller already knows
 which node to change.
 """
 from __future__ import annotations
+import copy
 import os
 import re
 import json
@@ -41,13 +43,125 @@ Modification guidelines:
 """
 
 
+# ── regex fast-path for simple param modifications ────────────────────────────
+
+# Maps Korean/English keywords → IR param names and which op types to update
+_PARAM_RULES: list[tuple[re.Pattern, str, list[str]]] = [
+    # height / 높이
+    (re.compile(r"높이(?:를|을|은|이)?\s*(\d+(?:\.\d+)?)", re.IGNORECASE),
+     "height", ["box", "cylinder", "cone", "linear_extrude"]),
+    (re.compile(r"height\s*(?:to|=|:)?\s*(\d+(?:\.\d+)?)", re.IGNORECASE),
+     "height", ["box", "cylinder", "cone", "linear_extrude"]),
+
+    # radius / 반지름
+    (re.compile(r"반지름(?:를|을|은|이)?\s*(\d+(?:\.\d+)?)", re.IGNORECASE),
+     "radius", ["cylinder", "sphere", "cone", "circle_2d"]),
+    (re.compile(r"radius\s*(?:to|=|:)?\s*(\d+(?:\.\d+)?)", re.IGNORECASE),
+     "radius", ["cylinder", "sphere", "cone", "circle_2d"]),
+
+    # width / 너비 / 폭
+    (re.compile(r"(?:너비|폭)(?:를|을|은|이)?\s*(\d+(?:\.\d+)?)", re.IGNORECASE),
+     "width", ["box", "square_2d"]),
+    (re.compile(r"width\s*(?:to|=|:)?\s*(\d+(?:\.\d+)?)", re.IGNORECASE),
+     "width", ["box", "square_2d"]),
+
+    # depth / 깊이
+    (re.compile(r"깊이(?:를|을|은|이)?\s*(\d+(?:\.\d+)?)", re.IGNORECASE),
+     "depth", ["box"]),
+    (re.compile(r"depth\s*(?:to|=|:)?\s*(\d+(?:\.\d+)?)", re.IGNORECASE),
+     "depth", ["box"]),
+
+    # thickness / 두께
+    (re.compile(r"두께(?:를|을|은|이)?\s*(\d+(?:\.\d+)?)", re.IGNORECASE),
+     "height", ["box"]),
+    (re.compile(r"thickness\s*(?:to|=|:)?\s*(\d+(?:\.\d+)?)", re.IGNORECASE),
+     "height", ["box"]),
+
+    # size / 크기 (applies width/depth/height uniformly on box, radius on sphere/cylinder)
+    (re.compile(r"크기(?:를|을|은|이)?\s*(\d+(?:\.\d+)?)", re.IGNORECASE),
+     "__size__", []),
+    (re.compile(r"size\s*(?:to|=|:)?\s*(\d+(?:\.\d+)?)", re.IGNORECASE),
+     "__size__", []),
+
+    # count / 개수 / 수량
+    (re.compile(r"(?:개수|수량|갯수)(?:를|을|은|이)?\s*(\d+)", re.IGNORECASE),
+     "count", ["linear_pattern", "circular_pattern"]),
+    (re.compile(r"count\s*(?:to|=|:)?\s*(\d+)", re.IGNORECASE),
+     "count", ["linear_pattern", "circular_pattern"]),
+]
+
+
+def _apply_param_to_node(node: IRNode, param: str, value: float, ops: list[str]) -> IRNode:
+    """Recursively walk tree; update `param` wherever `node.op in ops`."""
+    updated_params = dict(node.params)
+    if node.op in ops:
+        updated_params[param] = value
+
+    new_children = [_apply_param_to_node(c, param, value, ops) for c in node.children]
+    return node.model_copy(update={"params": updated_params, "children": new_children})
+
+
+def _apply_size_to_node(node: IRNode, value: float) -> IRNode:
+    """Special case: 'size' updates width/depth/height for box, radius for sphere/cylinder."""
+    updated_params = dict(node.params)
+    if node.op == "box":
+        updated_params["width"] = value
+        updated_params["depth"] = value
+        updated_params["height"] = value
+    elif node.op in ("sphere",):
+        updated_params["radius"] = value
+    elif node.op in ("cylinder", "cone"):
+        updated_params["radius"] = value
+        updated_params["height"] = value
+
+    new_children = [_apply_size_to_node(c, value) for c in node.children]
+    return node.model_copy(update={"params": updated_params, "children": new_children})
+
+
+def _regex_modify(ir: IRTree, text: str) -> Optional[IRTree]:
+    """
+    Try to apply simple NL modifications without the Claude API.
+    Returns a modified IRTree if a rule matched, else None.
+    """
+    for pattern, param, ops in _PARAM_RULES:
+        m = pattern.search(text)
+        if not m:
+            continue
+        value = float(m.group(1))
+        if param == "__size__":
+            new_root = _apply_size_to_node(ir.root, value)
+        else:
+            new_root = _apply_param_to_node(ir.root, param, value, ops)
+
+        if new_root == ir.root:
+            # nothing actually changed — rule matched text but op not found in tree
+            continue
+
+        return ir.model_copy(update={"root": new_root})
+
+    return None
+
+
 # ── public API ────────────────────────────────────────────────────────────────
 
 async def modify_ir(ir: IRTree, modification_text: str) -> IRTree:
-    """Apply a NL modification request to an IRTree, returning a new tree."""
+    """Apply a NL modification request to an IRTree, returning a new tree.
+
+    First tries a regex fast-path for simple parameter changes.
+    Falls back to Claude API for complex modifications.
+    """
+    # 1. Try regex fast-path (no API credits needed)
+    fast = _regex_modify(ir, modification_text)
+    if fast is not None:
+        return fast
+
+    # 2. Fall back to Claude API
     api_key = os.getenv("ANTHROPIC_API_KEY")
     if not api_key:
-        raise ValueError("수정을 처리하려면 ANTHROPIC_API_KEY가 필요합니다.")
+        raise ValueError(
+            "단순 파라미터 수정이 아닌 경우 ANTHROPIC_API_KEY가 필요합니다. "
+            "높이/반지름/너비/깊이/두께/크기/개수 변경은 API 없이도 가능합니다."
+        )
 
     try:
         import anthropic
