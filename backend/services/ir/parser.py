@@ -143,6 +143,33 @@ async def parse_to_ir(
     return await _ai_parse(text, system_prompt, user_prompt)
 
 
+# ── Korean numeral normalizer ─────────────────────────────────────────────────
+
+# Maps Korean numeral words → digits, longest first to avoid partial matches
+_KO_NUM: list[tuple[str, str]] = [
+    ("열하나", "11"), ("열둘", "12"), ("열셋", "13"), ("열넷", "14"), ("열다섯", "15"),
+    ("열여섯", "16"), ("열일곱", "17"), ("열여덟", "18"), ("열아홉", "19"), ("열", "10"),
+    ("하나", "1"), ("한", "1"),
+    ("둘", "2"), ("두", "2"),
+    ("셋", "3"), ("세", "3"),
+    ("넷", "4"), ("네", "4"),
+    ("다섯", "5"),
+    ("여섯", "6"),
+    ("일곱", "7"),
+    ("여덟", "8"),
+    ("아홉", "9"),
+]
+
+
+def _normalize_ko_numerals(text: str) -> str:
+    """Convert Korean numeral words before 개 to digit strings.
+    "세개" → "3개", "두개" → "2개", etc.
+    """
+    for word, digit in _KO_NUM:
+        text = re.sub(rf"{word}\s*개", f"{digit}개", text)
+    return text
+
+
 # ── component extractors ──────────────────────────────────────────────────────
 
 def _num(text: str, *keywords) -> Optional[float]:
@@ -230,33 +257,54 @@ def _extract_pattern_info(text: str) -> Optional[dict]:
     """
     Detect count + arrangement keywords.
     Returns {"arrangement": "circular"|"linear", "count": N, ...} or None.
+
+    Handles Korean numeral words ("세개" → 3) before matching.
     """
-    # Circular: "N개 원형" or "원형 N개" or "circular N"
+    # Normalize Korean numeral words first
+    t = _normalize_ko_numerals(text)
+
+    # ── circular ─────────────────────────────────────────────────────────────
     m = re.search(
         r"(\d+)\s*개\s*(?:씩\s*)?원형|원형으로\s*(\d+)\s*개?|circular\s*(\d+)",
-        text, re.I
+        t, re.I
     )
     if m:
         count = int(next(v for v in m.groups() if v is not None))
-        pat_r = _num(text, "패턴.*반지름", "배치.*반지름") or None
+        # Pattern radius: explicit keyword or "중심으로부터 N 떨어진"
+        pat_r = (
+            _num(t, "패턴.*반지름", "배치.*반지름")
+            or _extract_center_distance(t)
+        )
         return {"arrangement": "circular", "count": count, "radius": pat_r}
 
-    # Grid: "NxM 배열" or "N행 M열"
-    m = re.search(r"(\d+)\s*[xX×]\s*(\d+)\s*(?:배열|grid)", text, re.I)
+    # ── grid ──────────────────────────────────────────────────────────────────
+    m = re.search(r"(\d+)\s*[xX×]\s*(\d+)\s*(?:배열|grid)", t, re.I)
     if m:
         rows, cols = int(m.group(1)), int(m.group(2))
-        spacing = _num(text, "간격", "spacing") or 30.0
+        spacing = _num(t, "간격", "spacing") or 30.0
         return {"arrangement": "grid", "rows": rows, "cols": cols, "spacing": spacing}
 
-    # Linear: explicit "일렬" or "N개 간격" but exclude hole count "구멍 N개"
-    text_no_hole = re.sub(r"구멍\s*\d+\s*개|\d+\s*개\s*구멍", "", text)
-    m = re.search(r"(\d+)\s*개\s*(?:씩\s*)?(?:일렬|linear|row)|(\d+)\s*개.*간격", text_no_hole, re.I)
+    # ── linear ────────────────────────────────────────────────────────────────
+    # exclude hole count "구멍 N개" before matching
+    t_no_hole = re.sub(r"구멍\s*\d+\s*개|\d+\s*개\s*구멍", "", t)
+    m = re.search(
+        r"(\d+)\s*개\s*(?:씩\s*)?(?:일렬|linear|row)|(\d+)\s*개.*간격",
+        t_no_hole, re.I
+    )
     if m:
         count = int(next(v for v in m.groups() if v is not None))
         if count > 1:
-            spacing = _num(text, "간격", "spacing") or 30.0
+            spacing = _num(t, "간격", "spacing") or 30.0
             return {"arrangement": "linear", "count": count, "spacing": spacing}
 
+    return None
+
+
+def _extract_center_distance(text: str) -> Optional[float]:
+    """Extract distance from center: '중심으로부터 N 떨어진' or '중심에서 N'."""
+    m = re.search(r"중심(?:으로)?부터\s*(\d+(?:\.\d+)?)|중심에서\s*(\d+(?:\.\d+)?)", text)
+    if m:
+        return float(next(v for v in m.groups() if v is not None))
     return None
 
 
@@ -323,8 +371,9 @@ def _build_shape_node(kind: str, dims: dict) -> Optional[IRNode]:
     if kind == "cylinder":
         r = dims.get("radius")
         h = dims.get("height")
-        if r and h:
-            return _cylinder_node(r, h)
+        if r:
+            # Default height = radius (sensible for decorative/pattern cylinders)
+            return _cylinder_node(r, h if h else round(r, 4))
         return None
 
     if kind == "sphere":
