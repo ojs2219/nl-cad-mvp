@@ -134,6 +134,12 @@ class OpenSCADGenerator(CADGenerator):
                 f"{pad}}}"
             )
 
+        if op == "relation":
+            raise ValueError(
+                f"OpenSCADGenerator: unresolved relation node (type={node.params.get('type')!r}). "
+                "Call services.ir.resolver.resolve(tree) before generate_code()."
+            )
+
         raise ValueError(f"OpenSCADGenerator: unknown op '{op}'")
 
     def _children_block(self, children: List[IRNode], depth: int) -> str:

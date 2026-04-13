@@ -3,6 +3,7 @@ from schemas import GenerateRequest, ModifyRequest, GenerationOut
 from auth import get_approved_user
 from services.ir.parser import parse_to_ir
 from services.ir.modifier import modify_ir
+from services.ir.resolver import resolve
 from services.generators.openscad import OpenSCADGenerator
 from services.cad_service import generate_stl
 from services.storage_service import upload_stl, upload_ir_json
@@ -62,6 +63,9 @@ async def _run_pipeline(
                 system_prompt=system_prompt_text,
                 user_prompt=getattr(current_user, "custom_prompt", None),
             )
+
+        # ── 1b. Resolve semantic relation nodes → concrete geometry ───────────
+        ir_tree = resolve(ir_tree)
 
         ir_json_str = ir_tree.to_json()
 

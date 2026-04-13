@@ -37,6 +37,14 @@ EXTRUSION   require exactly 1 child (a 2-D profile)
 PATTERN     require exactly 1 child (the template shape)
   linear_pattern    params: count, spacing=[dx,dy,dz]
   circular_pattern  params: count, radius [, axis="z"]
+
+RELATION    semantic placement — resolved to geometry before code generation
+  relation  params: type, [axis], [direction]
+            type: "on_top_of" | "center_of" | "next_to" | "inside" | "aligned_center"
+            children: [reference_shape, subject_shape, ...]
+            → resolver.resolve() converts these to translate/union/difference
+            → partial shapes (hemisphere etc.) are expressed via boolean/clip,
+              not as new primitives
 """
 
 from __future__ import annotations
@@ -51,8 +59,16 @@ TRANSFORM_OPS   = {"translate", "rotate", "scale", "mirror"}
 PROFILE_OPS     = {"polygon", "circle_2d", "square_2d", "path"}
 EXTRUDE_OPS     = {"linear_extrude", "rotate_extrude"}
 PATTERN_OPS     = {"linear_pattern", "circular_pattern"}
+RELATION_OPS    = {"relation"}
+# relation.params:
+#   type (required): "on_top_of" | "center_of" | "next_to" | "inside" | "aligned_center"
+#   axis (optional): "x" | "y" | "z"  — directional axis for next_to (default "x")
+#   direction (optional): 1 | -1       — placement direction for next_to (default 1)
 
-ALL_OPS = PRIMITIVE_OPS | BOOLEAN_OPS | TRANSFORM_OPS | PROFILE_OPS | EXTRUDE_OPS | PATTERN_OPS
+ALL_OPS = (
+    PRIMITIVE_OPS | BOOLEAN_OPS | TRANSFORM_OPS
+    | PROFILE_OPS | EXTRUDE_OPS | PATTERN_OPS | RELATION_OPS
+)
 
 
 # ── IR node ───────────────────────────────────────────────────────────────────
@@ -137,6 +153,9 @@ def validate(node: IRNode, path: str = "root") -> None:
 
     if node.op in PRIMITIVE_OPS | PROFILE_OPS and n != 0:
         raise IRValidationError(f"{path}({node.op}): leaf node must have 0 children, got {n}")
+
+    if node.op in RELATION_OPS and n < 2:
+        raise IRValidationError(f"{path}(relation): needs ≥2 children (reference + subject), got {n}")
 
     for i, child in enumerate(node.children):
         validate(child, f"{path}.children[{i}]")
