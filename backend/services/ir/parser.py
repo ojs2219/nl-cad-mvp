@@ -539,7 +539,7 @@ def _parse_segment(text: str) -> Optional[IRNode]:
         # Hole count
         cm = (
             re.search(r"구멍\s*(\d+)\s*개", text)
-            or re.search(r"(\d+)\s*개?\s*구멍", text)
+            or re.search(r"(\d+)\s*개\s*구멍", text)   # 개 mandatory — avoids "반지름 10 구멍" false match
             or re.search(r"hole[s]?\s*[×x]?\s*(\d+)", text, re.I)
         )
         hole_count = int(cm.group(1)) if cm else 1
