@@ -10,6 +10,7 @@ from services.storage_service import upload_stl, upload_ir_json
 import db_ops
 import uuid
 import os
+import json
 import tempfile
 
 router = APIRouter()
@@ -69,6 +70,10 @@ async def _run_pipeline(
 
         ir_json_str = ir_tree.to_json()
 
+        # Extract human-readable parse summary produced by the interpreter
+        summary_json = ir_tree.metadata.get("parse_summary_json") if ir_tree.metadata else None
+        params_json_str = json.dumps(summary_json, ensure_ascii=False) if summary_json else None
+
         # ── 2. Code generation ────────────────────────────────────────────────
         scad_code = _generator.generate_code(ir_tree)
 
@@ -95,6 +100,7 @@ async def _run_pipeline(
             scad_code=scad_code,
             stl_url=stl_url,
             status="success",
+            params_json=params_json_str,
         )
 
     except ValueError as e:
