@@ -547,15 +547,14 @@ def _parse_segment(text: str) -> Optional[IRNode]:
         )
         hole_count = int(cm.group(1)) if cm else 1
 
-        # Position check: explicit location keyword OR count > 1 (auto-positioning)
+        # Position must be explicitly named — count alone is not sufficient.
         has_position = bool(
-            re.search(r"중심|중앙|가운데|center", text, re.I)  # named position
-            or hole_count > 1                                   # count implies positioning
+            re.search(r"중심|중앙|가운데|center", text, re.I)
         )
 
         if has_position:
             shape = _apply_holes(shape, hole_count, hole_r, dims)
-        # else: hole mentioned but no position → skip (ambiguous intent)
+        # else: hole mentioned but no explicit position → skip
 
     # Apply pattern if detected in this segment
     if pattern:
