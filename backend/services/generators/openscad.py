@@ -1,5 +1,6 @@
 """OpenSCAD code generator — recursively walks an IRTree and emits .scad source."""
 from __future__ import annotations
+import math
 from typing import List
 from services.ir.schema import IRNode, IRTree
 from services.generators.base import CADGenerator
@@ -63,6 +64,26 @@ class OpenSCADGenerator(CADGenerator):
             h = node.pf("height", 10)
             c = "true" if node.p("center", False) else "false"
             return f"{pad}square([{w}, {h}], center={c});{comment}"
+
+        if op == "trapezoid":
+            # Isosceles trapezoid centred on X, bottom edge at Y=0
+            bw = node.pf("bottom_width", 20)
+            tw = node.pf("top_width",    10)
+            h  = node.pf("height",       10)
+            b2 = round(bw / 2, 4); t2 = round(tw / 2, 4)
+            pts_str = f"[-{b2},0],[{b2},0],[{t2},{h}],[-{t2},{h}]"
+            return f"{pad}polygon(points=[{pts_str}]);{comment}"
+
+        if op == "regular_polygon":
+            sides  = int(node.p("sides", 6))
+            r      = node.pf("radius", 10)
+            pts    = [
+                [round(r * math.cos(2 * math.pi * i / sides), 6),
+                 round(r * math.sin(2 * math.pi * i / sides), 6)]
+                for i in range(sides)
+            ]
+            pts_str = ", ".join(f"[{x},{y}]" for x, y in pts)
+            return f"{pad}polygon(points=[{pts_str}]);{comment}"
 
         # ── booleans ──────────────────────────────────────────────────────────
         if op in ("union", "difference", "intersection"):
@@ -131,6 +152,22 @@ class OpenSCADGenerator(CADGenerator):
                 f"{p2}rotate([0, 0, i * 360 / {count}])\n"
                 f"{p3}translate([{radius}, 0, 0])\n"
                 f"{child}\n"
+                f"{pad}}}"
+            )
+
+        if op == "grid_pattern":
+            rows    = int(node.p("rows", 2))
+            cols    = int(node.p("cols", 2))
+            rs      = node.pf("row_spacing", 30)
+            cs      = node.pf("col_spacing", 30)
+            child   = self._node(node.children[0], depth + 2) if node.children else ""
+            p1      = _INDENT * (depth + 1)
+            return (
+                f"{pad}for (row = [0:{rows - 1}]) {{{comment}\n"
+                f"{p1}for (col = [0:{cols - 1}]) {{\n"
+                f"{p1}  translate([col*{cs}, row*{rs}, 0])\n"
+                f"{child}\n"
+                f"{p1}}}\n"
                 f"{pad}}}"
             )
 

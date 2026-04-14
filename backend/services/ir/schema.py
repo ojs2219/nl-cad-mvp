@@ -56,9 +56,10 @@ from pydantic import BaseModel, Field
 PRIMITIVE_OPS   = {"box", "cylinder", "sphere", "cone"}
 BOOLEAN_OPS     = {"union", "difference", "intersection"}
 TRANSFORM_OPS   = {"translate", "rotate", "scale", "mirror"}
-PROFILE_OPS     = {"polygon", "circle_2d", "square_2d", "path"}
+PROFILE_OPS     = {"polygon", "circle_2d", "square_2d", "path",
+                   "trapezoid", "regular_polygon"}
 EXTRUDE_OPS     = {"linear_extrude", "rotate_extrude"}
-PATTERN_OPS     = {"linear_pattern", "circular_pattern"}
+PATTERN_OPS     = {"linear_pattern", "circular_pattern", "grid_pattern"}
 RELATION_OPS    = {"relation"}
 # relation.params:
 #   type (required): "on_top_of" | "center_of" | "next_to" | "inside" | "aligned_center"
