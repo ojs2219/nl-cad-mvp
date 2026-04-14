@@ -534,16 +534,28 @@ def _parse_segment(text: str) -> Optional[IRNode]:
         return None
 
     # Apply hole modifier for plate/box
+    # Position must be explicitly stated — either via a position keyword or a count (N개).
+    # If neither is present, the hole keyword is ambiguous and we skip it.
     if "hole" in kinds and main_kind in ("plate", "box"):
         hole_r = dims.get("hole_radius") or dims.get("radius") or 5.0
-        # Hole count
+
+        # Count — 개 is mandatory to avoid "반지름 10 구멍" → count=10 false match
         cm = (
             re.search(r"구멍\s*(\d+)\s*개", text)
-            or re.search(r"(\d+)\s*개\s*구멍", text)   # 개 mandatory — avoids "반지름 10 구멍" false match
+            or re.search(r"(\d+)\s*개\s*구멍", text)
             or re.search(r"hole[s]?\s*[×x]?\s*(\d+)", text, re.I)
         )
         hole_count = int(cm.group(1)) if cm else 1
-        shape = _apply_holes(shape, hole_count, hole_r, dims)
+
+        # Position check: explicit location keyword OR count > 1 (auto-positioning)
+        has_position = bool(
+            re.search(r"중심|중앙|가운데|center", text, re.I)  # named position
+            or hole_count > 1                                   # count implies positioning
+        )
+
+        if has_position:
+            shape = _apply_holes(shape, hole_count, hole_r, dims)
+        # else: hole mentioned but no position → skip (ambiguous intent)
 
     # Apply pattern if detected in this segment
     if pattern:
